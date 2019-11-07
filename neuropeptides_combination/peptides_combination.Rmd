@@ -1,0 +1,95 @@
+---
+title: "peptides_combination"
+date: "November 7, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(dplyr)
+library(ggplot2)
+# those peptides were chosen from scRNAseq data with each have more than 200 total detected UMIs
+peptides_list <- c("AstA","AstC","CCAP","CCHa1","CCHa2","Dh31","Gpb5","ITP","Mip","NPF","Nplp2","sNPF","Tk","CG13565")
+```
+
+for each cluster, plot the peptide combination.
+```{r}
+for (i in 0:10) {
+  reads_matrix <- read.csv(file = "peptide_scaled_data.csv")
+  reads_matrix <- filter(reads_matrix,cluster == i)            # choose using which cluster!
+  expr_matrix <- apply(reads_matrix[,peptides_list],1,function(x)ifelse(x >= 0.5,1,0)) # define expression cutoff: scaled value > 0.5
+  colnames(expr_matrix) <- reads_matrix$cell
+  stas_results <- data.frame(cell = colnames(expr_matrix),peptides_numbers = apply(expr_matrix, 2, function(x)sum(x)))
+  combination <- c()
+  for (j in 1:length(colnames(expr_matrix))) {
+    combination <- append(combination,paste(names(apply(expr_matrix, 2, function(x)which(x==1))[[j]]),collapse = "+"))
+  }
+  stas_results <- cbind(stas_results,combination)
+  combination_frequency <- c()
+  for (k in 1:length(combination)) {
+    combination_frequency <- append(combination_frequency,sum(combination ==  combination[k])/length(combination))
+  }
+  stas_results <- cbind(stas_results,combination_frequency)
+  stas_results <- mutate(stas_results, corrected_pep_com = ifelse(combination_frequency > 0.03,as.character(combination),"others"))
+  # please change the combination cutoff!
+  stas_results$Total_cells <- rep(length(rownames(stas_results)),length(rownames(stas_results)))
+  expressed_cells <- c()
+  for (l in 1:length(combination)) {
+    expressed_cells <- append(expressed_cells,sum(combination ==  combination[l]))
+  }
+  stas_results <- cbind(stas_results,expressed_cells)
+  #write.csv(stas_results,file = paste0("peptides_combination_of_cluster_",i,".csv",sep=""))
+  #pdf(file = paste0("peptides_combination_of_cluster_",i,".pdf",sep=""),width = 9,height = 6)
+  print(ggplot2::ggplot(stas_results,mapping= aes(x = peptides_numbers,fill = as.factor(corrected_pep_com)))+
+    geom_bar() +
+    xlab("number of expressed peptides") +
+    ylab("cell counts") +
+    #geom_text(aes(label = scales::percent(..prop..)), stat= "count", vjust = -.5) +
+    labs(title = paste("Cluster",i,sep = "-")) +
+    scale_x_continuous(limits = c(-1,14),breaks = c(0,seq(1:13))))
+  #dev.off()
+}
+```
+
+plot peptide combination using whole cells
+
+```{r}
+reads_matrix <- read.csv(file = "peptide_scaled_data.csv")
+expr_matrix_new <- apply(reads_matrix[,peptides_list],1,function(x)ifelse(x >= 0.5,1,0))  # define expression cutoff: scaled value > 0.5
+colnames(expr_matrix_new) <- reads_matrix$cell
+stas_results <- data.frame(cell = colnames(expr_matrix_new),peptides_numbers = apply(expr_matrix_new, 2, function(x)sum(x)))
+combination <- c()
+for (i in 1:length(colnames(expr_matrix_new))) {
+  combination <- append(combination,paste(names(apply(expr_matrix_new, 2, function(x)which(x==1))[[i]]),collapse = "+"))
+}
+stas_results <- cbind(stas_results,combination)
+combination_frequency <- c()
+for (i in 1:length(combination)) {
+  combination_frequency <- append(combination_frequency,sum(combination ==  combination[i])/length(combination))
+}
+stas_results <- cbind(stas_results,combination_frequency)
+stas_results <- mutate(stas_results, corrected_pep_com = ifelse(combination_frequency > 0.01,as.character(combination),"others")) # for the peptides_combination is "", it's frequency is 0.006, has been transferd to "others"
+
+stas_results$Total_cells <- rep(length(rownames(stas_results)),length(rownames(stas_results)))
+expressed_cells <- c()
+for (i in 1:length(combination)) {
+  expressed_cells <- append(expressed_cells,sum(combination ==  combination[i]))
+}
+stas_results <- cbind(stas_results,expressed_cells)
+write.csv(stas_results,file = "peptides_combination_of_whole_cells.csv")
+corrected_pep_com_backup <- stas_results$corrected_pep_com
+stas_results$corrected_pep_com <- factor(stas_results$corrected_pep_com,levels = c(sort(unique(stas_results$corrected_pep_com))[-17],"others"))
+#pdf(file = "peptides_combination_of_whole_cells.pdf",width = 9,height = 6)
+ggplot2::ggplot(stas_results,mapping= aes(x = peptides_numbers,fill = corrected_pep_com))+
+  geom_bar() +
+  xlab("number of expressed peptides") +
+  ylab("cell counts") +
+  #geom_text(aes(label = scales::percent(..prop..)), stat= "count", vjust = -.5) +
+  labs(title = ("whole cells")) +
+  scale_x_continuous(limits = c(-1,14),breaks = c(0,seq(1:13)))
+#dev.off()
+```
+

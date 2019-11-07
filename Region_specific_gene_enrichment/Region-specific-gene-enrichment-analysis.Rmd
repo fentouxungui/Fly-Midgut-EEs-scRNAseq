@@ -1,0 +1,117 @@
+---
+title: "Region-specific-gene-enrichment-analysis"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+> evalute scRNAseq cluster's regional location preference by using regional bulk-RNAseq data.
+
+To evaluate the regional preference of each cluster, we used the bulk EE RNA-seq data of different midgut regions from the Flygut-seq database (http://flygutseq.buchonlab.com/resources)(Dutta et al., 2015), from which we can find regional differentially expressed genes of EE cells.
+
+
+
+## part1 -  find shared genes between RNA-SEQ And scRNA-SEQ data
+
+```{r}
+library(Seurat)
+library(dplyr)
+
+# import seurat object of scRNAseq data
+cds <- readRDS("G101_PC20res04.rds") 
+# save gene names
+write.csv(as.data.frame(rownames(cds@raw.data)),file = "seurat_gene_list.csv",quote = FALSE,row.names = FALSE)
+# go to flybase transfer gene symbols to gene id,save the results as "gene_name_conversion_results_Flybase.txt"
+# https://flybase.org/convert/id
+# import "gene_name_conversion_results_Flybase.txt"
+FBgn <- read.delim(file = "gene_name_conversion_results_Flybase.txt")
+head(FBgn)
+# import bulk-RNAseq data (extracted from "website rpkm values(1017).xlsx" which is downloaded from
+# http://static.buchonlab.com/website%20rpkm%20values.xlsx)
+gene_expr <- read.csv("website rpkm values(1017).csv",stringsAsFactors = FALSE)
+head(gene_expr)
+sum(gene_expr$GeneID %in% FBgn$X.SUBMITTED.ID)
+# only keep genes that are detected in scRNAseq data
+gene_expr <- gene_expr[gene_expr$GeneID %in% FBgn$X.SUBMITTED.ID,]
+dim(gene_expr)
+```
+
+## part2 - rank the genes from bulk-RNAseq data
+
+```{r}
+colnames(gene_expr)[4] <- "R1"  # change colname, R1,R2,R3,R4,R5 represent five gut regions
+gene_expr[,4:8] <- as.data.frame(lapply(gene_expr[,4:8],as.numeric))
+n.region <- 5 # 5 regions
+
+# for each region, choose genes with RPKM value >=3.5, and calculate the foldchange compared with other four region.
+for (i in 1:n.region) {
+  expr_tmp <- gene_expr[gene_expr[,i+3] >= 3.5,]  # the minimal RPKM value!
+  expr_tmp <- mutate(expr_tmp,fc = expr_tmp[,i+3]/apply(expr_tmp[,c(-1:-3,-i-3)],1,function(x)mean(x))) # calculate foldchange
+  results <- arrange(expr_tmp,desc(fc)) # rank the genes by foldchange
+  assign(paste0("R",i,"_ranked_genes",sep = ""),results) # save variant
+  write.csv(results,file = paste0("R",i,"_ranked_genes.csv",sep = "")) # save results of each region
+}
+```
+
+## part3 - caculate the regional enrichment scores for each cluster
+
+```{r}
+# for each region, calculate the enrichment score of each scRNAseq cluster.
+for (i in 1:n.region) {
+  expr_cutoff <- 0.5   # the minimical scaled value to define Whether a gene is expressed in a cell of scRNAseq data.
+  tmp_R <- get(paste0("R",i,"_ranked_genes",sep = "")) # get variant
+  gene_list <- tmp_R$GeneID[1:100]  # get top 100 ranked genes
+  top100 <- FBgn[FBgn$X.SUBMITTED.ID %in% gene_list,] # filter FBgn data, only keep the top 100 genes
+  expr_data <- cds@scale.data[rownames(cds@scale.data) %in% top100$ANNOTATION_SYMBOL | rownames(cds@scale.data) %in% top100$SYMBOL,] # get expression profile of the top 100 genes from scRNAseq scaled data(seurat object)
+  expr_data <- t(expr_data)
+  expr_matrix <- t(as.data.frame(apply(expr_data,1,function(x)ifelse(x >= expr_cutoff,1,0)))) # tranfer to a expression binary matrix, 0:not expressed, 1:expressed.
+  # add cluter info to each cell
+  index_cell <- as.data.frame(as.numeric(as.character(cds@ident)))
+  expr_matrix <- cbind(index_cell,expr_matrix)
+  colnames(expr_matrix)[1] <- "cluster"
+  # for each cluster(total 11 clusters), calculate the expression ratio of each gene
+  n.cluster <- 11 # number of clusters
+  for (j in 0:(n.cluster - 1)) {
+    cluster <- expr_matrix[expr_matrix$cluster == j,]
+    stas_results <- data.frame(cell = colnames(expr_matrix),peptides_numbers = apply(expr_matrix, 2, function(x)sum(x)))
+    results <- as.data.frame(apply(cluster[,-1],2,function(x)sum(x)/length(rownames(cluster))))
+    colnames(results) <- paste("cluster-",j,sep = "")
+    tmp_name <- paste("cluster-",j,sep = "")
+    assign(tmp_name,results)
+  }
+  # merge the expression ratio of the 11 clusters for each region
+  final <<- get("cluster-0")
+  for (k in 1:(n.cluster - 1)) {
+    final <<- cbind(final,get(paste("cluster-",k,sep = "")))
+  }
+  assign(paste0("Region_",i,sep=""),final)
+  write.csv(final,file = paste0("R",i,"-expression-ratio.csv",sep=""))
+  rm(final)
+}
+
+##  sum up genes' expression ratio for each cluster
+res <- as.data.frame(apply(get("Region_1"), 2, function(x)sum(x)))
+for (i in 2:n.region) {
+  res <- cbind(res,as.data.frame(apply(get(paste0("Region_",i,sep = "")), 2, function(x)sum(x))))
+}
+colnames(res) <- c(paste0("R-",1:n.region,sep=""))
+write.csv(res,file = "regional_enrichment_results_of_each_cluster.csv")
+```
+
+## part4  plot enrichment results
+
+```{r}
+res_stack <- stack(res)
+colnames(res_stack)[2] <- "Region"
+res_stack$cluster <- factor(x=rep(rownames(res),n.region),levels= paste("cluster-",0:(n.cluster - 1),sep=""))
+
+library(ggplot2)
+ggplot2::ggplot(res_stack,aes(x=cluster,y=values,fill = Region)) +
+  geom_bar(stat = "identity",position = "dodge")
+ggplot2::ggplot(res_stack,aes(x=Region,y=values,fill = cluster)) +
+  geom_bar(stat = "identity",position = "dodge")
+```
+
+
