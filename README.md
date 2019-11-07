@@ -11,3 +11,6 @@ To investigate peptide hormones co-expression patterns at single cell level, we 
 
 ## EEs_TF_Code_1e4
 TF code analysis, please see [felixhorns/FlyPN](https://github.com/felixhorns/FlyPN)
+
+## Data Portal
+We also provide an online scRNAseq data query [portal](https://xilab.shinyapps.io/database).
